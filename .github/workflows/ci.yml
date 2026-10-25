@@ -67,7 +67,7 @@ jobs:
           cargo build --release --locked --target aarch64-apple-darwin
           cargo build --release --locked --target x86_64-apple-darwin
           lipo -create target/aarch64-apple-darwin/release/plugin target/x86_64-apple-darwin/release/plugin -output stage/plugin
-          lipo -verify_arch arm64 x86_64 stage/plugin
+          lipo stage/plugin -verify_arch arm64 x86_64
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform }}
