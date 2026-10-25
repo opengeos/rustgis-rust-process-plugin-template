@@ -18,7 +18,7 @@ repos:
         pass_filenames: false
       - id: cargo-clippy
         name: cargo clippy
-        entry: cargo clippy --target wasm32-unknown-unknown -- -D warnings
+        entry: cargo clippy --all-targets -- -D warnings
         language: system
         types: [rust]
         pass_filenames: false
