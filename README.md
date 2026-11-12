@@ -22,10 +22,10 @@ The script builds with `cargo build --release --locked` and writes:
 | File | Purpose |
 |---|---|
 | `dist/<id>/` | Development folder containing the manifest and executable |
-| `dist/<id>-<version>.rgplugin` | Installable ZIP package with Unix executable permissions preserved |
-| `dist/<id>.json` | Registry submission entry with the release URL and SHA-256 |
+| `dist/<id>-<version>-<platform>.rgplugin` | Installable ZIP package for your platform (`linux`, `macos` or `windows`), with Unix executable permissions preserved |
+| `dist/<id>.json` | Registry submission entry with each package's release URL and SHA-256 |
 
-A local package advertises only the current platform. The release workflow combines all three platforms. The registry entry points to your GitHub release, which must exist before you submit it.
+A local build makes the package for the current platform only. The release workflow makes one for each of the three. The registry entry points to your GitHub release, which must exist before you submit it.
 
 ## Try the examples
 
@@ -49,7 +49,7 @@ Replace `my-plugin` with your manifest id. To exercise all declared commands and
 python scripts/smoke.py --cli /path/to/rustgis-cli --strict
 ```
 
-For an installed archive, use `rustgis-cli plugins install dist/my-plugin-0.1.0.rgplugin`. Installation does not sandbox a native plugin. Add native libraries deliberately, and arrange their distribution or installation for every supported platform.
+For an installed archive, use `rustgis-cli plugins install dist/my-plugin-0.1.0-linux.rgplugin` (the package for your platform). Installation does not sandbox a native plugin. Add native libraries deliberately, and arrange their distribution or installation for every supported platform.
 
 ## The process protocol
 
@@ -76,16 +76,16 @@ python -m unittest discover -s tests -p 'test_*.py'
 pre-commit run --all-files
 ```
 
-Rust tests exercise protocol envelopes and run the actual executable with valid and malformed requests. Packaging tests check repeatable bytes, executable permissions, missing platform binaries and version mismatches. CI builds and tests on Linux, macOS and Windows, then packages the binaries and runs the command and tool in RustGIS on Linux. Set the `RUSTGIS_VERSION` GitHub repository variable to test a particular RustGIS release; otherwise CI uses the latest release.
+Rust tests exercise protocol envelopes and run the actual executable with valid and malformed requests. Packaging tests check repeatable bytes, one package per platform, executable permissions, missing platform binaries and version mismatches. CI builds and tests on Linux, macOS and Windows, then packages each platform's binary and runs the command and tool in RustGIS on Linux. Set the `RUSTGIS_VERSION` GitHub repository variable to test a particular RustGIS release; otherwise CI uses the latest release.
 
 ## Release
 
 1. Update both versions and commit on a feature branch through a pull request.
 2. Once the change is merged, push a matching version tag, for example `v0.1.0`.
 3. The Release workflow calls the same three-platform CI workflow. It builds a universal macOS executable for Apple Silicon and Intel, plus Linux x86-64 and Windows x86-64 executables.
-4. After all builds, tests and the real RustGIS smoke check pass, it publishes one `.rgplugin` and its registry JSON entry in the GitHub release.
+4. After all builds, tests and the real RustGIS smoke check pass, it publishes one `.rgplugin` per platform and their registry JSON entry in the GitHub release.
 
-The archive contains `plugin.json`, `LICENSE` and the three `bin/<platform>/` executables. Linux is built on Ubuntu 22.04; macOS targets version 11 or later. Host permissions control RustGIS host requests but do not restrict a native program's filesystem or network access. Process commands have a host timeout; tools run until completion or cancellation. Cancellation stops the process and its children.
+Each archive contains `plugin.json`, `LICENSE` and its platform's `bin/<platform>/` executable, so nobody downloads the other platforms' programs: RustGIS installs the package for the platform it runs on. The three hold the same `plugin.json` except `run`, which names that platform's program. A package per platform needs a RustGIS newer than 0.6.0; an older one doesn't list the plugin, so raise `minRustgisVersion` in `plugin.json` to the first release that reads them before you submit to the registry. Linux is built on Ubuntu 22.04; macOS targets version 11 or later. Host permissions control RustGIS host requests but do not restrict a native program's filesystem or network access. Process commands have a host timeout; tools run until completion or cancellation. Cancellation stops the process and its children.
 
 To test release packaging manually after downloading the three CI executable artifacts into `artifacts/linux`, `artifacts/macos` and `artifacts/windows`:
 
@@ -93,4 +93,4 @@ To test release packaging manually after downloading the three CI executable art
 python scripts/package.py --binaries artifacts --tag v0.1.0
 ```
 
-The script refuses mismatched tags or incomplete platform bundles and writes deterministic archives. To list a published version in the [plugin registry](https://plugins.rustgis.app), submit its `dist/<id>.json` as `registry/<id>.json` to [opengeos/rustgis-plugins](https://github.com/opengeos/rustgis-plugins), choosing the appropriate categories.
+The script refuses mismatched tags or a missing platform and writes deterministic archives. To list a published version in the [plugin registry](https://plugins.rustgis.app), submit its `dist/<id>.json` as `registry/<id>.json` to [opengeos/rustgis-plugins](https://github.com/opengeos/rustgis-plugins), choosing the appropriate categories.

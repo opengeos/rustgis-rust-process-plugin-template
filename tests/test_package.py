@@ -1,4 +1,4 @@
-"""Verify release archives, permissions, platform completeness and version checks."""
+"""Verify the per-platform release archives, permissions, completeness and version checks."""
 
 import importlib.util
 import json
@@ -31,26 +31,65 @@ class PackageTests(unittest.TestCase):
             target.parent.mkdir(parents=True)
             target.write_bytes(f"example {platform} binary".encode())
 
-    def test_release_is_reproducible_and_bundles_all_platforms(self):
-        """A release contains all run paths and preserves Unix executable modes."""
+    def test_release_is_reproducible_with_a_package_per_platform(self):
+        """A release has one package per platform, each with only its own executable."""
         platforms = list(PACKAGE.PLATFORMS)
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}):
-            archive, entry = PACKAGE.package(self.root, self.binaries, platforms, "v0.1.0")
-            first = archive.read_bytes()
+            archives, entry = PACKAGE.package(self.root, self.binaries, platforms, "v0.1.0")
+            first = [a.read_bytes() for a in archives]
             PACKAGE.package(self.root, self.binaries, platforms, "v0.1.0")
-            self.assertEqual(first, archive.read_bytes())
+            self.assertEqual(first, [a.read_bytes() for a in archives])
             registry = json.loads(entry.read_text())
-        self.assertIn("owner/example/releases/download/v0.1.0/", registry["source"]["url"])
-        with zipfile.ZipFile(archive) as zipped:
-            manifest = json.loads(zipped.read("plugin.json"))
-            self.assertEqual(set(manifest["run"]), set(platforms))
-            for argv in manifest["run"].values():
-                self.assertEqual(zipped.getinfo(argv[0]).external_attr >> 16, 0o100755)
+        self.assertEqual(set(registry["source"]), set(platforms))
+        shared = []
+        for platform, archive in zip(platforms, archives):
+            self.assertEqual(archive.name, f"my-plugin-0.1.0-{platform}.rgplugin")
+            source = registry["source"][platform]
+            self.assertEqual(source["url"], f"https://github.com/owner/example/releases/download/v0.1.0/{archive.name}")
+            self.assertEqual(source["sha256"], PACKAGE.hashlib.sha256(archive.read_bytes()).hexdigest())
+            with zipfile.ZipFile(archive) as zipped:
+                manifest = json.loads(zipped.read("plugin.json"))
+                program = f"bin/{platform}/{PACKAGE.PLATFORMS[platform]}"
+                self.assertEqual(manifest.pop("run"), {platform: [program]})
+                self.assertEqual(sorted(zipped.namelist()), sorted(["LICENSE", "plugin.json", program]))
+                self.assertEqual(zipped.getinfo(program).external_attr >> 16, 0o100755)
+                self.assertEqual(zipped.read(program), f"example {platform} binary".encode())
+                shared.append(manifest)
+        # One plugin: the registry refuses packages whose plugin.json differs beyond `run`.
+        self.assertTrue(all(m == shared[0] for m in shared))
+
+    def test_development_folder_is_the_staged_platform(self):
+        """dist/<id>/ holds one platform's files, the one asked for."""
+        platforms = list(PACKAGE.PLATFORMS)
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}):
+            PACKAGE.package(self.root, self.binaries, platforms, stage="windows")
+            (self.root / "dist/my-plugin/state.json").write_text("kept")
+            PACKAGE.package(self.root, self.binaries, platforms, stage="macos")
+        folder = self.root / "dist/my-plugin"
+        self.assertEqual(json.loads((folder / "plugin.json").read_text())["run"], {"macos": ["bin/macos/plugin"]})
+        self.assertEqual(sorted(p.name for p in (folder / "bin").iterdir()), ["macos"])
+        # A file the plugin keeps in its folder survives repackaging.
+        self.assertEqual((folder / "state.json").read_text(), "kept")
+
+    def test_an_oversized_package_writes_nothing(self):
+        """A platform over the size limit fails the release before any file is written."""
+        real = PACKAGE.archive
+
+        def limited(files):
+            if "bin/windows/plugin.exe" in files:
+                raise ValueError("package exceeds the registry's 64 MiB limit")
+            return real(files)
+
+        with patch.object(PACKAGE, "archive", limited), self.assertRaisesRegex(ValueError, "64 MiB"):
+            PACKAGE.package(self.root, self.binaries, list(PACKAGE.PLATFORMS))
+        self.assertEqual(list((self.root / "dist").iterdir()), [])
 
     def test_local_package_only_advertises_available_platform(self):
         """A development package does not claim binaries for other systems."""
-        archive, _ = PACKAGE.package(self.root, self.binaries, ["linux"])
-        with zipfile.ZipFile(archive) as zipped:
+        archives, entry = PACKAGE.package(self.root, self.binaries, ["linux"])
+        self.assertEqual([a.name for a in archives], ["my-plugin-0.1.0-linux.rgplugin"])
+        self.assertEqual(list(json.loads(entry.read_text())["source"]), ["linux"])
+        with zipfile.ZipFile(archives[0]) as zipped:
             self.assertEqual(json.loads(zipped.read("plugin.json"))["run"], {"linux": ["bin/linux/plugin"]})
             self.assertNotIn("bin/windows/plugin.exe", zipped.namelist())
 
@@ -59,6 +98,7 @@ class PackageTests(unittest.TestCase):
         (self.binaries / "windows/plugin.exe").unlink()
         with self.assertRaisesRegex(ValueError, "missing or empty windows"):
             PACKAGE.package(self.root, self.binaries, list(PACKAGE.PLATFORMS))
+        self.assertFalse(list((self.root / "dist").glob("*.rgplugin")) if (self.root / "dist").exists() else [])
 
     def test_tag_and_cargo_versions_must_match_manifest(self):
         """A release cannot publish a mismatched tag or Cargo package version."""
