@@ -86,7 +86,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: Combine all three platforms
+      - name: Package each platform
         env:
           RELEASE_TAG: ${{ inputs.release-tag }}
         shell: bash
