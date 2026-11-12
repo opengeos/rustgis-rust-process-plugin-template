@@ -63,10 +63,26 @@ class PackageTests(unittest.TestCase):
         platforms = list(PACKAGE.PLATFORMS)
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}):
             PACKAGE.package(self.root, self.binaries, platforms, stage="windows")
+            (self.root / "dist/my-plugin/state.json").write_text("kept")
             PACKAGE.package(self.root, self.binaries, platforms, stage="macos")
         folder = self.root / "dist/my-plugin"
         self.assertEqual(json.loads((folder / "plugin.json").read_text())["run"], {"macos": ["bin/macos/plugin"]})
         self.assertEqual(sorted(p.name for p in (folder / "bin").iterdir()), ["macos"])
+        # A file the plugin keeps in its folder survives repackaging.
+        self.assertEqual((folder / "state.json").read_text(), "kept")
+
+    def test_an_oversized_package_writes_nothing(self):
+        """A platform over the size limit fails the release before any file is written."""
+        real = PACKAGE.archive
+
+        def limited(files):
+            if "bin/windows/plugin.exe" in files:
+                raise ValueError("package exceeds the registry's 64 MiB limit")
+            return real(files)
+
+        with patch.object(PACKAGE, "archive", limited), self.assertRaisesRegex(ValueError, "64 MiB"):
+            PACKAGE.package(self.root, self.binaries, list(PACKAGE.PLATFORMS))
+        self.assertEqual(list((self.root / "dist").iterdir()), [])
 
     def test_local_package_only_advertises_available_platform(self):
         """A development package does not claim binaries for other systems."""

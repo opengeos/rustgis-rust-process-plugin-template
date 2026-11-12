@@ -111,14 +111,17 @@ def package(root: Path, binaries: Path, platforms: list[str], tag: str | None = 
     dist = root / "dist"
     dist.mkdir(exist_ok=True)
     stage = stage if stage in platforms else platforms[0]
-    package_paths, sources = [], {}
+    # Every archive is made before anything is written: one over the size limit changes nothing.
+    built = {}
     for key in platforms:
         files = {
             "plugin.json": (json.dumps(manifest | {"run": {key: expected[key]}}, indent=2) + "\n").encode(),
             "LICENSE": (root / "LICENSE").read_bytes(),
             expected[key][0]: (binaries / key / PLATFORMS[key]).read_bytes(),
         }
-        data = archive(files)
+        built[key] = (files, archive(files))
+    package_paths, sources = [], {}
+    for key, (files, data) in built.items():
         package_path = dist / f"{plugin_id}-{version}-{key}.rgplugin"
         package_path.write_bytes(data)
         package_paths.append(package_path)
@@ -128,10 +131,11 @@ def package(root: Path, binaries: Path, platforms: list[str], tag: str | None = 
         }
         if key == stage:
             folder = dist / plugin_id
-            # Only generated files are staged here, replacing an earlier platform's. Other
-            # local files are never packaged.
-            if folder.exists():
-                shutil.rmtree(folder)
+            # Only generated files are staged here, and only bin/ is replaced (it may hold an
+            # earlier platform's executable): files the plugin keeps in its folder stay, and
+            # are never packaged.
+            if (folder / "bin").exists():
+                shutil.rmtree(folder / "bin")
             for name, content in files.items():
                 target = folder / name
                 target.parent.mkdir(parents=True, exist_ok=True)
